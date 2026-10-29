@@ -1,0 +1,72 @@
+IG TRACKER — INSTALACIÓN EN CHROME Y EDGE
+=======================================
+
+1. Si tienes el ZIP, extráelo en una carpeta permanente.
+   Si estás en el repositorio, utiliza directamente la carpeta dist.
+   No muevas ni borres esa carpeta después de instalarla.
+
+2. Abre la página de extensiones:
+   Chrome: chrome://extensions
+   Edge:   edge://extensions
+
+3. Activa «Modo de desarrollador».
+
+4. Pulsa «Cargar descomprimida» y selecciona la carpeta que contiene
+   manifest.json (dist en el repositorio, o la carpeta del ZIP extraído).
+
+5. Fija IG Tracker en la barra del navegador si lo deseas.
+   Pulsa su icono: se abrirá el panel completo en una pestaña.
+
+6. Abre https://www.instagram.com e inicia sesión normalmente.
+   Vuelve al panel y pulsa «Conectar Instagram».
+   No escribas tu contraseña en IG Tracker: solo se usa tu sesión de Instagram.
+
+7. Pulsa «Nuevo escaneo» y elige «Escaneo completo».
+   Mantén abierta una pestaña de Instagram en la misma cuenta.
+   El primer escaneo crea una referencia. El segundo detecta cambios.
+
+PRUEBA VISUAL SIN CONECTAR UNA CUENTA
+En Configuración, pulsa «Explorar con datos de ejemplo».
+La demostración no realiza solicitudes ni modifica Instagram.
+
+PAUSA Y REANUDACIÓN
+Puedes cerrar el panel: el trabajo se guarda en el navegador.
+El motor usa alarmas para recuperarse si Chrome o Edge suspenden su proceso.
+Si cierras Instagram o caduca su sesión, abre Instagram y reanuda el escaneo.
+Si cierras el navegador, el trabajo continúa al volver a abrirlo, con sesión
+disponible. Las alarmas del navegador pueden añadir una espera al despertar.
+
+SI INSTAGRAM RECHAZA UNA CONSULTA
+Si ocurre al conectar, el panel muestra un diagnóstico permanente con la ruta
+de consulta, el estado HTTP y, si corresponde, una cuenta atrás. No se ha
+iniciado un escaneo ni hay avance que guardar en ese caso. Espera al plazo
+indicado antes de pulsar «Volver a intentar». El plazo no garantiza que
+Instagram haya retirado su restricción. No pulses conectar repetidamente.
+
+Completa cualquier verificación en Instagram. El avance y las capturas válidas
+se conservan. Si se repiten cursores o los recuentos no coinciden, cancela el
+escaneo pausado y empieza uno nuevo. No se registra una lista incompleta como
+referencia. Las interfaces internas de Instagram pueden cambiar sin aviso.
+
+IMPORTANTE
+No se garantiza una duración ni la ausencia de restricciones de Instagram.
+No hay límites comerciales de resultados, exportaciones, historial o lotes.
+Los lotes requieren confirmación, se ejecutan uno a uno y se detienen ante
+errores. Un resultado incierto no se repite automáticamente.
+
+Los seguidores perdidos son cuentas ausentes entre dos capturas completas;
+también pueden ser cuentas desactivadas, eliminadas o que te han bloqueado.
+La fecha es la detección, no el momento exacto en que dejaron de seguirte.
+
+Los datos se almacenan solo en este perfil del navegador. No hay sincronización
+entre Chrome y Edge. Desinstalar la extensión elimina su almacenamiento.
+
+Para actualizar una instalación local, vuelve a compilar y pulsa «Recargar»
+en la tarjeta de IG Tracker de la página de extensiones. Después, recarga las
+pestañas de Instagram y del panel. El pie del panel debe indicar v1.0.1.
+Si instalaste desde un ZIP en otra carpeta, sustituye primero los archivos de
+esa misma carpeta por los del ZIP nuevo. No hace falta desinstalar ni borrar
+los datos de la extensión.
+
+Esta herramienta es independiente de Instagram/Meta y de InsTF.
+Úsala en tus propias cuentas y de acuerdo con las condiciones de Instagram.
