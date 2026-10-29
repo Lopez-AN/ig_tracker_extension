@@ -1,10 +1,14 @@
 import { test as base, chromium, expect, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
 import type { AppState, Command, Reply } from '../../src/core/types';
+import packageInfo from '../../package.json' with { type: 'json' };
+
+const { version } = packageInfo;
 
 interface Model {
   followers: number[];
   following: number[];
+  followRequests: number[];
   accountId: string;
   pageSize: number;
   pageCalls: string[];
@@ -13,6 +17,14 @@ interface Model {
   repeatCursor: boolean;
   partial: boolean;
   uncertainAction: boolean;
+  actionGate?: Promise<void>;
+  actionNoChange?: boolean;
+  actionStatus?: number;
+  actionMissingRelation?: boolean;
+  actionHtml?: boolean;
+  actionGraphqlErrors?: boolean;
+  actionPrefix?: boolean;
+  actionUpdateField?: boolean;
   rejectProfileQuery?: boolean;
   sessionEmbedded?: boolean;
   webBootstrap?: boolean;
@@ -28,7 +40,7 @@ interface Model {
 const rawUser = (id: number) => ({ pk: String(id), username: `persona${id}`, full_name: `Persona ${id}`, profile_pic_url: '', is_private: id % 3 === 0, is_verified: false });
 const test = base.extend<{ extensionContext: BrowserContext; panel: Page; instagram: Page; model: Model }>({
   model: async ({}, use) => {
-    await use({ followers: Array.from({ length: 135 }, (_, i) => 1000 + i), following: Array.from({ length: 80 }, (_, i) => 1050 + i), accountId: '42', pageSize: 60, pageCalls: [], actionCalls: [], rateLimit: false, repeatCursor: false, partial: false, uncertainAction: false, requestedCounts: [], sessionCalls: [] });
+    await use({ followers: Array.from({ length: 135 }, (_, i) => 1000 + i), following: Array.from({ length: 80 }, (_, i) => 1050 + i), followRequests: [], accountId: '42', pageSize: 60, pageCalls: [], actionCalls: [], rateLimit: false, repeatCursor: false, partial: false, uncertainAction: false, requestedCounts: [], sessionCalls: [], webBootstrap: true });
   },
   extensionContext: async ({ model }, use) => {
     const extension = path.resolve('dist');
@@ -39,8 +51,55 @@ const test = base.extend<{ extensionContext: BrowserContext; panel: Page; instag
       const sessionUser = { ...rawUser(Number(model.accountId)), username: 'cuenta_prueba', ...(model.missingCounts ? {} : { follower_count: model.followers.length, following_count: model.following.length }) };
       if (url.pathname === '/') {
         const profile = model.sessionEmbedded ? `<script type="application/json">${JSON.stringify({ data: { viewedProfile: { ...sessionUser, pk: '99', username: 'perfil_ajeno' }, currentUser: sessionUser } })}</script>` : '';
-        const bootstrap = model.webBootstrap ? '<script type="application/json" id="__eqmc">{"f":"simulated-dtsg-fixture","l":"simulated-lsd-fixture"}</script>' : '';
+        const bootstrap = model.webBootstrap ? '<script type="application/json" id="__eqmc">{"f":"simulated-dtsg-fixture","l":"simulated-lsd-fixture","client_revision":123456}</script>' : '';
         return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="es"><title>Instagram simulado</title><body><h1>Sesión simulada para pruebas locales</h1>${profile}${bootstrap}</body></html>` });
+      }
+      const payload = new URLSearchParams(route.request().postData() ?? '');
+      const webUnfollow = url.pathname === '/api/graphql' && payload.get('fb_api_req_friendly_name') === 'usePolarisUnfollowMutation';
+      const webFollow = url.pathname === '/api/graphql' && payload.get('fb_api_req_friendly_name') === 'usePolarisFollowMutation';
+      const webFriendship = webFollow || webUnfollow;
+      if (webFriendship || /\/friendships\/(create|destroy|remove_follower)\//.test(url.pathname)) {
+        model.actionCalls.push(url.pathname);
+        expect(route.request().method()).toBe('POST');
+        let id: number;
+        if (webFriendship) {
+          const variables = JSON.parse(payload.get('variables') ?? '{}');
+          id = Number(variables.target_user_id);
+          expect(variables.container_module).toBe('profile');
+          expect(payload.get('doc_id')).toBe(webFollow ? '26508036048874888' : '27789106940691111');
+          expect(payload.get('av')).toBe(model.accountId);
+          expect(payload.get('fb_dtsg')).toBe('simulated-dtsg-fixture');
+          expect(payload.get('lsd')).toBe('simulated-lsd-fixture');
+          expect(payload.get('__rev')).toBe('123456');
+          expect(payload.get('jazoest')).toMatch(/^2\d+$/);
+          expect(route.request().headers()['x-fb-friendly-name']).toBe(webFollow ? 'usePolarisFollowMutation' : 'usePolarisUnfollowMutation');
+          expect(route.request().headers()['x-fb-lsd']).toBe('simulated-lsd-fixture');
+          expect(route.request().headers()['x-csrftoken']).toBe('simulated-not-a-secret');
+        } else {
+          id = Number(url.pathname.split('/').filter(Boolean).at(-1));
+          expect(payload.get('user_id')).toBe(String(id));
+        }
+        // Both old friendship routes returned HTTP 200 HTML in the user's
+        // session. A JSON mock must not hide these integration failures.
+        if (/\/(?:create|destroy)\//.test(url.pathname) || model.actionHtml) return route.fulfill({ contentType: 'text/html', status: 200, body: '<!doctype html><html><body>private-response-marker</body></html>' });
+        if (model.actionGate) await model.actionGate;
+        if (model.uncertainAction) return route.abort('failed');
+        if (model.actionStatus) return respond({ status: 'fail' }, model.actionStatus);
+        const field = webFollow ? 'xdt_create_friendship' : model.actionUpdateField ? 'xdt_instagram_api__v1__friendships__unfollow__update' : 'xdt_destroy_friendship';
+        if (model.actionMissingRelation) return respond({ data: { [field]: {} } });
+        if (model.actionGraphqlErrors) return respond({ data: { [field]: { friendship_status: { following: webFollow } } }, errors: [{ message: 'private-response-marker' }] });
+        if (!model.actionNoChange) {
+          if (webFollow && !model.following.includes(id)) {
+            if (rawUser(id).is_private) { if (!model.followRequests.includes(id)) model.followRequests.push(id); }
+            else model.following.push(id);
+          }
+          if (webUnfollow) { model.following = model.following.filter(item => item !== id); model.followRequests = model.followRequests.filter(item => item !== id); }
+          if (url.pathname.includes('/remove_follower/')) model.followers = model.followers.filter(item => item !== id);
+        }
+        const relation = { friendship_status: { following: model.following.includes(id), outgoing_request: model.followRequests.includes(id) } };
+        const data = webFriendship ? { data: { [field]: relation } } : { status: 'ok', ...relation };
+        if (model.actionPrefix) return route.fulfill({ contentType: 'application/json', body: `for (;;);${JSON.stringify(data)}` });
+        return respond(data);
       }
       if (url.pathname.includes('current_user') || url.pathname.includes('web_profile_info') || /\/users\/\d+\/info\//.test(url.pathname) || url.pathname === '/api/graphql') {
         model.sessionCalls.push(url.pathname);
@@ -69,15 +128,6 @@ const test = base.extend<{ extensionContext: BrowserContext; panel: Page; instag
         const users = all.slice(cursor, cursor + model.pageSize).map(rawUser);
         const hasMore = !model.partial && cursor + model.pageSize < all.length;
         return respond({ status: 'ok', users, has_more: hasMore, next_max_id: hasMore ? model.repeatCursor && cursor > 0 ? String(cursor) : String(cursor + model.pageSize) : '' });
-      }
-      if (/\/friendships\/(create|destroy|remove_follower)\//.test(url.pathname)) {
-        model.actionCalls.push(url.pathname);
-        if (model.uncertainAction) return route.abort('failed');
-        const id = Number(url.pathname.split('/').filter(Boolean).at(-1));
-        if (url.pathname.includes('/create/')) { if (!model.following.includes(id)) model.following.push(id); }
-        if (url.pathname.includes('/destroy/')) model.following = model.following.filter(item => item !== id);
-        if (url.pathname.includes('/remove_follower/')) model.followers = model.followers.filter(item => item !== id);
-        return respond({ status: 'ok', friendship_status: { following: model.following.includes(id), outgoing_request: false } });
       }
       // Never send an unmatched test request to live Instagram.
       return route.abort('blockedbyclient');
@@ -307,6 +357,270 @@ test('recuento cero válido y las tres acciones mantienen sus resultados separad
   expect(data.overrides[0].followingAt).toBeDefined(); expect(data.overrides[0].followerAt).toBeDefined();
   expect(model.actionCalls).toHaveLength(3);
   expect(data.latest?.following).toEqual([]);
+});
+
+test('dejar de seguir desde la fila muestra progreso, quita la cuenta y no duplica acciones', async ({ panel, model }) => {
+  model.following.push(...Array.from({ length: 30 }, (_, i) => 2000 + i));
+  await connect(panel); await scan(panel);
+  await panel.getByRole('navigation').getByRole('button', { name: 'No te siguen de vuelta' }).click();
+  const row = panel.locator('tbody tr').filter({ hasText: '@persona2023' });
+  await expect(row.getByRole('button')).toHaveCount(1);
+  await expect(panel.getByRole('button', { name: /Eliminar a .* de tus seguidores/ })).toHaveCount(0);
+  let release!: () => void;
+  model.actionGate = new Promise<void>(resolve => { release = resolve; });
+  try {
+    await row.getByRole('button', { name: 'Dejar de seguir', exact: true }).click();
+    await expect(panel.getByRole('dialog')).toContainText('@persona2023');
+    await panel.getByRole('button', { name: 'Confirmar acción' }).click();
+    await expect(panel.getByRole('dialog')).toHaveCount(0);
+    await expect(row.getByRole('button', { name: 'Dejando de seguir…' })).toBeDisabled();
+    await expect(panel.getByRole('region', { name: 'Estado de acciones' })).toBeInViewport();
+    await expect.poll(() => model.actionCalls.length).toBe(1);
+    await panel.screenshot({ path: 'test-results/unfollow-progreso.png' });
+  } finally { release(); model.actionGate = undefined; }
+  await expect.poll(async () => (await state(panel)).batch?.status).toBe('completed');
+  await expect(row).toHaveCount(0);
+  await expect(panel.getByRole('status').filter({ hasText: '1 acción confirmada por Instagram.' })).toBeVisible();
+  await expect(panel.locator('tbody tr').first().getByRole('button', { name: 'Dejar de seguir', exact: true })).toBeEnabled();
+  expect(model.following).not.toContain(2023);
+  expect(model.actionCalls).toEqual(['/api/graphql']);
+  const data = await state(panel);
+  expect(data.overrides.find(item => item.userId === '2023')?.following).toBe(false);
+  expect(data.latest?.following?.some(user => user.id === '2023')).toBe(true);
+});
+
+for (const scenario of ['unchanged', 'missing', 'network', 'http', 'html', 'graphql'] as const) {
+  test(`unfollow ${scenario}: error visible y botones desbloqueados, sin éxito ni reintento falso`, async ({ panel, model }) => {
+    model.following.push(2000);
+    await connect(panel); await scan(panel);
+    model.actionNoChange = scenario === 'unchanged';
+    model.actionMissingRelation = scenario === 'missing';
+    model.uncertainAction = scenario === 'network';
+    model.actionStatus = scenario === 'http' ? 403 : undefined;
+    model.actionHtml = scenario === 'html';
+    model.actionGraphqlErrors = scenario === 'graphql';
+    await panel.getByRole('navigation').getByRole('button', { name: 'No te siguen de vuelta' }).click();
+    const row = panel.locator('tbody tr').filter({ hasText: '@persona2000' });
+    await row.getByRole('button', { name: 'Dejar de seguir', exact: true }).click();
+    await panel.getByRole('button', { name: 'Confirmar acción' }).click();
+    await expect.poll(async () => (await state(panel)).batch?.status).toBe('completed');
+    const data = await state(panel);
+    const uncertain = ['network', 'missing', 'html', 'graphql'].includes(scenario);
+    expect(data.batch?.items[0].status).toBe(uncertain ? 'unknown' : 'failed');
+    expect(data.overrides).toHaveLength(0);
+    await expect(row.getByRole('button', { name: 'Dejar de seguir', exact: true })).toBeEnabled();
+    await expect(row.locator('.row-action-message')).toContainText(uncertain ? 'Resultado incierto' : 'No confirmado');
+    await expect(panel.getByRole('alert')).toContainText('1 acción sin confirmar');
+    const progress = panel.getByRole('region', { name: 'Estado de acciones' });
+    await expect(progress).toContainText('Lote finalizado con acciones sin confirmar');
+    if (scenario === 'http') {
+      await expect(progress).toContainText('/api/graphql');
+      await expect(progress).toContainText('HTTP 403');
+      await panel.screenshot({ path: 'test-results/unfollow-error.png' });
+    }
+    if (scenario === 'html') {
+      await expect(progress).toContainText('página HTML');
+      await expect(progress).toContainText('HTTP 200');
+    }
+    await expect(panel.locator('body')).not.toContainText('private-response-marker');
+    await panel.reload();
+    expect((await state(panel)).batch?.status).toBe('completed');
+    await command(panel, { type: 'BATCH_CONTROL', action: 'resume' });
+    expect(model.actionCalls).toHaveLength(1);
+    expect(model.following).toContain(2000);
+  });
+}
+
+test('un lote fallido con pendientes muestra cancelar y libera las acciones al cancelarlo', async ({ panel, model }) => {
+  model.following.push(2000, 2001);
+  await connect(panel); await scan(panel);
+  model.actionNoChange = true;
+  await panel.getByRole('navigation').getByRole('button', { name: 'No te siguen de vuelta' }).click();
+  await panel.getByRole('checkbox', { name: 'Seleccionar página actual' }).check();
+  await expect(panel.getByRole('button', { name: 'Eliminar seguidores', exact: true })).toHaveCount(0);
+  await panel.locator('.selection-actions').getByRole('button', { name: 'Dejar de seguir', exact: true }).click();
+  await panel.getByRole('button', { name: 'Confirmar acción' }).click();
+  await expect.poll(async () => (await state(panel)).batch?.status).toBe('paused');
+  const progress = panel.getByRole('region', { name: 'Estado de acciones' });
+  await expect(progress).toBeInViewport();
+  await expect(progress).toContainText('1 pendiente');
+  await expect(panel.locator('tbody tr').last().getByRole('button')).toHaveText('En cola…');
+  await expect(panel.locator('tbody tr').first().getByRole('button')).toBeDisabled();
+  await panel.screenshot({ path: 'test-results/lote-en-pausa.png' });
+  await progress.getByRole('button', { name: 'Cancelar lote', exact: true }).click();
+  await expect(progress).toHaveCount(0);
+  await expect(panel.locator('tbody tr').first().getByRole('button', { name: 'Dejar de seguir', exact: true })).toBeEnabled();
+  await expect(panel.locator('tbody tr').last().getByRole('button', { name: 'Dejar de seguir', exact: true })).toBeEnabled();
+  expect(model.actionCalls).toHaveLength(1);
+});
+
+test('unfollow web admite JSON protegido y la variante de respuesta update sin usar REST', async ({ panel, model }) => {
+  model.following.push(2000);
+  model.actionPrefix = true; model.actionUpdateField = true;
+  await connect(panel); await scan(panel);
+  const user = (await state(panel)).latest!.following!.find(user => user.id === '2000')!;
+  expect((await command(panel, { type: 'START_BATCH', action: 'unfollow', users: [user] })).ok).toBe(true);
+  await expect.poll(async () => (await state(panel)).batch?.status).toBe('completed');
+  const data = await state(panel);
+  expect(data.batch?.items[0].status).toBe('succeeded');
+  expect(data.overrides.find(item => item.userId === '2000')?.following).toBe(false);
+  expect(model.following).not.toContain(2000);
+  expect(model.actionCalls).toEqual(['/api/graphql']);
+});
+
+test('sin tokens web se pide recargar Instagram y no se envía ninguna mutación', async ({ panel, instagram, model }) => {
+  model.webBootstrap = false;
+  model.following.push(2000);
+  await instagram.reload();
+  await connect(panel); await scan(panel);
+  const user = (await state(panel)).latest!.following!.find(user => user.id === '2000')!;
+  expect((await command(panel, { type: 'START_BATCH', action: 'unfollow', users: [user] })).ok).toBe(true);
+  await expect.poll(async () => (await state(panel)).batch?.status).toBe('completed');
+  const data = await state(panel);
+  expect(data.batch?.items[0].status).toBe('failed');
+  expect(data.batch?.error).toContain('Recarga la pestaña de Instagram');
+  expect(data.batch?.error).toContain('No se ha enviado el unfollow');
+  expect(data.overrides).toHaveLength(0);
+  expect(model.actionCalls).toHaveLength(0);
+  expect(model.following).toContain(2000);
+});
+
+test('seguir una cuenta pública desde la fila confirma la relación y no usa create REST', async ({ panel, model }) => {
+  await connect(panel); await scan(panel);
+  await panel.getByRole('navigation').getByRole('button', { name: 'No sigues de vuelta' }).click();
+  const row = panel.locator('tbody tr').filter({ hasText: '@persona1000' });
+  let release!: () => void;
+  model.actionGate = new Promise<void>(resolve => { release = resolve; });
+  try {
+    await row.getByRole('button', { name: 'Seguir', exact: true }).click();
+    await expect(panel.getByRole('dialog')).toContainText('Seguir cuentas');
+    await panel.getByRole('button', { name: 'Confirmar acción' }).click();
+    await expect(row.getByRole('button', { name: 'Siguiendo…', exact: true })).toBeDisabled();
+    await expect.poll(() => model.actionCalls.length).toBe(1);
+  } finally { release(); model.actionGate = undefined; }
+  await expect.poll(async () => (await state(panel)).batch?.status).toBe('completed');
+  await expect(row).toHaveCount(0);
+  const data = await state(panel);
+  expect(data.overrides.find(item => item.userId === '1000')).toMatchObject({ following: true, requested: false });
+  expect(data.latest?.following?.some(user => user.id === '1000')).toBe(false);
+  expect(model.following).toContain(1000);
+  expect(model.actionCalls).toEqual(['/api/graphql']);
+});
+
+test('seguir una cuenta privada muestra Solicitud enviada sin afirmar que ya la sigues', async ({ panel, model }) => {
+  await connect(panel); await scan(panel);
+  await panel.getByRole('navigation').getByRole('button', { name: 'No sigues de vuelta' }).click();
+  const row = panel.locator('tbody tr').filter({ hasText: '@persona1002' });
+  await row.getByRole('button', { name: 'Seguir', exact: true }).click();
+  await panel.getByRole('button', { name: 'Confirmar acción' }).click();
+  await expect.poll(async () => (await state(panel)).batch?.status).toBe('completed');
+  await expect(row.locator('.relation-tag')).toHaveText('Solicitud enviada');
+  await expect(row.getByRole('button', { name: 'Solicitado', exact: true })).toBeDisabled();
+  const data = await state(panel);
+  expect(data.overrides.find(item => item.userId === '1002')).toMatchObject({ following: false, requested: true });
+  expect(data.batch?.items[0].message).toBe('Solicitud enviada');
+  expect(model.following).not.toContain(1002);
+  expect(model.followRequests).toContain(1002);
+  expect(model.actionCalls).toEqual(['/api/graphql']);
+  await panel.screenshot({ path: 'test-results/seguir-solicitud-privada.png' });
+  await panel.reload();
+  await panel.getByRole('navigation').getByRole('button', { name: 'No sigues de vuelta' }).click();
+  await expect(row.getByRole('button', { name: 'Solicitado', exact: true })).toBeDisabled();
+  expect(model.actionCalls).toHaveLength(1);
+});
+
+for (const scenario of ['unchanged', 'missing', 'network', 'http', 'html', 'graphql'] as const) {
+  test(`follow ${scenario}: sin éxito falso ni repetición, con error visible`, async ({ panel, model }) => {
+    await connect(panel); await scan(panel);
+    model.actionNoChange = scenario === 'unchanged';
+    model.actionMissingRelation = scenario === 'missing';
+    model.uncertainAction = scenario === 'network';
+    model.actionStatus = scenario === 'http' ? 403 : undefined;
+    model.actionHtml = scenario === 'html';
+    model.actionGraphqlErrors = scenario === 'graphql';
+    await panel.getByRole('navigation').getByRole('button', { name: 'No sigues de vuelta' }).click();
+    const row = panel.locator('tbody tr').filter({ hasText: '@persona1000' });
+    await row.getByRole('button', { name: 'Seguir', exact: true }).click();
+    await panel.getByRole('button', { name: 'Confirmar acción' }).click();
+    await expect.poll(async () => (await state(panel)).batch?.status).toBe('completed');
+    const data = await state(panel);
+    const uncertain = ['missing', 'network', 'html', 'graphql'].includes(scenario);
+    expect(data.batch?.items[0].status).toBe(uncertain ? 'unknown' : 'failed');
+    expect(data.overrides).toHaveLength(0);
+    await expect(row.getByRole('button', { name: 'Seguir', exact: true })).toBeEnabled();
+    await expect(row.locator('.row-action-message')).toContainText(uncertain ? 'Resultado incierto' : 'No confirmado');
+    await expect(panel.getByRole('alert')).toContainText('1 acción sin confirmar');
+    await expect(panel.locator('body')).not.toContainText('private-response-marker');
+    if (scenario === 'html') {
+      await expect(panel.getByRole('region', { name: 'Estado de acciones' })).toContainText('página HTML');
+      expect(data.batch?.failure?.status).toBe(200);
+    }
+    await panel.reload();
+    await command(panel, { type: 'BATCH_CONTROL', action: 'resume' });
+    expect(model.actionCalls).toEqual(['/api/graphql']);
+    expect(model.following).not.toContain(1000);
+    expect(model.followRequests).not.toContain(1000);
+  });
+}
+
+test('seguir sin tokens web no envía la acción ni prueba create REST', async ({ panel, instagram, model }) => {
+  model.webBootstrap = false;
+  await instagram.reload();
+  await connect(panel); await scan(panel);
+  const user = (await state(panel)).latest!.followers.find(user => user.id === '1000')!;
+  expect((await command(panel, { type: 'START_BATCH', action: 'follow', users: [user] })).ok).toBe(true);
+  await expect.poll(async () => (await state(panel)).batch?.status).toBe('completed');
+  expect((await state(panel)).batch?.error).toContain('No se ha enviado la solicitud de seguimiento');
+  expect(model.actionCalls).toHaveLength(0);
+  expect(model.following).not.toContain(1000);
+});
+
+test('la versión de la marca y del pie coincide con Chrome y con package.json', async ({ panel }) => {
+  expect(await panel.evaluate(() => chrome.runtime.getManifest().version)).toBe(version);
+  await expect(panel.locator('.brand-version')).toHaveText(`v${version}`);
+  await expect(panel.locator('.app-footer .version')).toHaveText(`v${version}`);
+  await expect(panel.getByText('Tu comunidad, más clara', { exact: true })).toHaveCount(0);
+});
+
+test('eliminar un seguidor solo se ofrece en las filas que realmente te siguen', async ({ panel }) => {
+  await connect(panel); await scan(panel);
+  await panel.getByRole('navigation').getByRole('button', { name: 'Seguidores mutuos' }).click();
+  const row = panel.locator('tbody tr').filter({ hasText: '@persona1050' });
+  const remove = row.getByRole('button', { name: 'Eliminar a persona1050 de tus seguidores' });
+  await expect(remove).toBeVisible();
+  await expect(remove).toHaveAttribute('title', 'Eliminar de tus seguidores (no deja de seguir la cuenta)');
+  await remove.click();
+  await expect(panel.getByRole('dialog')).toContainText('Eliminar seguidores');
+  await panel.getByRole('button', { name: 'Confirmar acción' }).click();
+  await expect.poll(async () => (await state(panel)).batch?.status).toBe('completed');
+  await expect(row).toHaveCount(0);
+  expect((await state(panel)).overrides[0].follower).toBe(false);
+  expect((await state(panel)).overrides[0].following).toBeUndefined();
+});
+
+test('actualizar recupera un lote antiguo pausado sin pendientes sin repetir la acción', async ({ panel, model, extensionContext }) => {
+  model.following.push(2000);
+  await connect(panel); await scan(panel);
+  const user = (await state(panel)).latest!.following!.find(user => user.id === '2000')!;
+  await panel.evaluate(async user => {
+    const database = await new Promise<IDBDatabase>(resolve => { const request = indexedDB.open('ig-tracker-v1'); request.onsuccess = () => resolve(request.result); });
+    await new Promise<void>((resolve, reject) => {
+      const tx = database.transaction('jobs', 'readwrite');
+      tx.objectStore('jobs').put({ id: 'batch', runId: 'legacy-paused', accountId: '42', tabId: 1, action: 'unfollow', status: 'paused',
+        items: [{ user, status: 'unknown', message: 'Resultado no confirmado' }], startedAt: Date.now(), updatedAt: Date.now(), dueAt: Date.now(), error: 'Resultado no confirmado' });
+      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
+    }); database.close();
+  }, user);
+  const cdp = await extensionContext.newCDPSession(panel);
+  const { targetInfos } = await cdp.send('Target.getTargets');
+  const worker = targetInfos.find(target => target.type === 'service_worker' && target.url.includes('background.js'))!;
+  await cdp.send('Target.closeTarget', { targetId: worker.targetId });
+  await panel.reload();
+  await expect.poll(async () => (await state(panel)).batch?.status).toBe('completed');
+  await panel.getByRole('navigation').getByRole('button', { name: 'No te siguen de vuelta' }).click();
+  await expect(panel.locator('tbody tr').getByRole('button', { name: 'Dejar de seguir', exact: true })).toBeEnabled();
+  await expect(panel.locator('.row-action-message')).toContainText('Resultado incierto');
+  expect(model.actionCalls).toHaveLength(0);
 });
 
 test('conexión desde el perfil de la sesión ya cargado, sin peticiones de identificación', async ({ panel, instagram, model }) => {

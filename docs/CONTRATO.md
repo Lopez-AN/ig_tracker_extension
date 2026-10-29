@@ -21,7 +21,17 @@ Interfaces observadas en el paquete público de referencia, **no una API oficial
 - `GET users/{id}/info/`: alternativa cuando no hay datos web de arranque o la consulta web no es admitida.
 - `GET friendships/{id}/followers/?count=…&max_id=…`: página de seguidores.
 - `GET friendships/{id}/following/?count=…&max_id=…`: página de seguidos.
-- `POST friendships/create/{id}/`, `destroy/{id}/`, `remove_follower/{id}/`: cambios de relación.
+- `POST /api/graphql`, mutación `usePolarisUnfollowMutation`, document ID `27789106940691111`: dejar de seguir. Variables: `target_user_id`, `container_module: profile` y `nav_chain` del perfil. Incluye `av`, `fb_dtsg`, `lsd`, `jazoest` y, solo si la página la publica, la revisión del cliente. Se exige CSRF y ambos tokens web antes de enviar; no se almacenan ni se devuelven al panel.
+- `POST /api/graphql`, mutación `usePolarisFollowMutation`, document ID `26508036048874888`: seguir. Comparte con unfollow la envoltura web de sesión y las variables del destino. Se valida exclusivamente `data.xdt_create_friendship.friendship_status`: `following: true` confirma seguimiento, mientras que `following: false` y `outgoing_request: true` confirman solo una solicitud pendiente.
+- `POST friendships/remove_follower/{id}/`: eliminar seguidores, sin cambios en esta corrección.
+
+El unfollow ya no usa `friendships/destroy/{id}/`: la sesión del usuario devolvió una respuesta no JSON con HTTP 200. El contrato web de reemplazo está corroborado por [cobanov/instagram](https://github.com/cobanov/instagram/blob/main/src/instagram-unfollower.js), que documenta el abandono de las rutas REST antiguas en octubre de 2026. Se reutilizan los metadatos del protocolo, no su implementación. No es una API oficial ni se ha comprobado esta mutación con una cuenta real durante el desarrollo.
+
+Se aceptan las respuestas `data.xdt_destroy_friendship.friendship_status` y `data.xdt_instagram_api__v1__friendships__unfollow__update.friendship_status`. Los errores GraphQL, incluso acompañados por datos parciales, no se consideran éxito ni se muestran en bruto. Una respuesta sin relación confirmada queda incierta. No hay fallback REST ni segunda mutación tras un error; tampoco se reenvían las acciones inciertas previas a la actualización.
+
+Desde 1.0.4, seguir tampoco usa `friendships/create/{id}/`, que devolvió HTML con HTTP 200 en la sesión del usuario. El documento de follow, su nombre y el campo de respuesta se corroboraron en el paquete público InsTF 6.1.26 (extensión `deppcpikimfefmjmdpalknbdfmhdlein`). Solo se reutilizan metadatos del protocolo, no código ni tokens de ese paquete. `src/core/instagram-friendship.ts` mantiene ambos contratos web y conserva sin cambios el documento, las variables y la validación del unfollow ya confirmado por el usuario. Las pruebas de desarrollo siguen usando respuestas simuladas, no acciones reales.
+
+El decodificador acepta objetos JSON, con o sin el prefijo protector `for (;;);`, sin evaluar código. Un HTML con HTTP 200 sigue siendo un resultado incierto para una mutación, con diagnóstico explícito y sin revelar el cuerpo. Una redirección a verificación se reconoce como `CHALLENGE` antes de intentar leer JSON.
 
 No se consulta `accounts/current_user`: esa comprobación adicional podía terminar con 429 antes de crear el escaneo. Solo se cambia al endpoint alternativo ante formato no admitido o rechazo de la consulta; nunca para eludir 429, inicio de sesión, verificación o bloqueo. Si Instagram deja de admitir una operación, se informa del fallo en lugar de afirmar un éxito. Los tokens de arranque permanecen en el origen de Instagram y no se incluyen en diagnósticos.
 
@@ -39,7 +49,11 @@ No se consulta `accounts/current_user`: esa comprobación adicional podía termi
 
 Escaneo: `running → paused/completed/cancelled`; `paused → running/cancelled`. El avance se conserva en cada página. Las alarmas MV3 recuperan trabajos, no inician analíticas nuevas.
 
-Lote: cada cuenta pasa de `pending → sending → succeeded/failed/unknown`. Una interrupción en `sending` se recupera como `unknown` y pausa el lote. Continuar procesa solo pendientes, nunca repite desconocidos. Repetir una acción exige selección y confirmación nuevas.
+Lote: cada cuenta pasa de `pending → sending → succeeded/failed/unknown`. Una interrupción en `sending` se recupera como `unknown`. Un fallo o resultado incierto pausa el lote solo si quedan cuentas pendientes; en caso contrario lo finaliza con errores, liberando los botones. La última acción confirmada finaliza el lote sin esperar el intervalo entre acciones. Continuar procesa solo pendientes, nunca repite desconocidos. Repetir una acción exige selección y confirmación nuevas. Al reiniciar se finalizan los lotes antiguos pausados sin pendientes, sin enviar solicitudes.
+
+Un unfollow solo se considera confirmado con `friendship_status.following: false` y sin `outgoing_request: true`. Una respuesta reconocida que conserva el seguimiento o una solicitud es `REJECTED`, no un éxito. Un follow debe confirmar seguimiento o solicitud. Si falta una relación reconocida, el resultado sigue siendo `UNKNOWN_ACTION`. No se guardan modificaciones locales para resultados rechazados o inciertos.
+
+El lote puede conservar `failure: ErrorInfo` con código, estado HTTP y ruta saneada, sin cuerpos de respuesta ni credenciales. Su progreso y controles son visibles al desplazarse; cada fila muestra su espera o error. Eliminar seguidores solo se ofrece para IDs presentes en la lista actual de seguidores, incluidas las modificaciones confirmadas posteriores al escaneo.
 
 ## Errores principales
 

@@ -1,4 +1,7 @@
 import { errorInfo, TrackerError } from '../core/errors';
+import { instagramActionResult } from '../core/instagram-action';
+import { instagramResponse } from '../core/instagram-response';
+import { instagramFriendshipRequest, instagramFriendshipResult } from '../core/instagram-friendship';
 import { findEmbeddedInstagramProfile, instagramAccount, normalizeInstagramUser } from '../core/instagram-profile';
 import type { Account, ActionResult, BridgeOperation, ListPage, Reply } from '../core/types';
 
@@ -54,10 +57,13 @@ async function performRequest(path: string, method: string, body: URLSearchParam
   const retryAfterMs = Number.isFinite(parsedAfter) ? parsedAfter : undefined;
   if (response.status === 429) throw new TrackerError('RATE_LIMIT', 'Instagram ha limitado esta consulta (HTTP 429). Espera antes de volver a intentarlo.', 429, retryAfterMs);
   if (response.status === 401 || /\/accounts\/login/.test(response.url)) throw new TrackerError('LOGIN', 'Tu sesión de Instagram ha caducado. Vuelve a iniciar sesión.', response.status);
+  if (/\/(?:challenge|checkpoint)(?:\/|\?|$)/.test(response.url)) throw new TrackerError('CHALLENGE', 'Instagram necesita que completes una verificación en su pestaña.', response.status);
   let data: Raw;
-  try { data = await response.json(); } catch {
-    throw new TrackerError(mutates ? 'UNKNOWN_ACTION' : 'FORMAT', mutates ? 'Instagram no ha confirmado el resultado. Compruébalo antes de repetir la acción.' : 'Instagram ha devuelto una respuesta no reconocida. Revisa tu sesión.', response.status);
+  let text: string;
+  try { text = await response.text(); } catch {
+    throw new TrackerError(mutates ? 'UNKNOWN_ACTION' : 'NETWORK', 'No se pudo leer la respuesta de Instagram. Comprueba el resultado antes de volver a intentarlo.', response.status);
   }
+  data = instagramResponse(text, mutates, response.status);
   if (data.challenge_required || data.checkpoint_url || data.message === 'challenge_required') throw new TrackerError('CHALLENGE', 'Instagram necesita que completes una verificación en su pestaña.', response.status);
   if (data.message === 'login_required') throw new TrackerError('LOGIN', 'Inicia sesión en Instagram para continuar.', response.status);
   if (data.spam || data.feedback_required || data.message === 'feedback_required') throw new TrackerError('BLOCKED', 'Instagram ha restringido temporalmente las solicitudes. Revisa su pestaña y vuelve a intentarlo más tarde.', response.status);
@@ -88,20 +94,21 @@ function embeddedProfile(accountId: string): Raw | null {
   return found;
 }
 
-function webTokens(): { dtsg: string; lsd: string } {
-  let dtsg = '', lsd = '';
+function webTokens(): { dtsg: string; lsd: string; revision: string } {
+  let dtsg = '', lsd = '', revision = '';
   try {
     const eqmc = JSON.parse(document.getElementById('__eqmc')?.textContent ?? '{}');
     if (typeof eqmc.f === 'string') dtsg = eqmc.f;
     if (typeof eqmc.l === 'string') lsd = eqmc.l;
   } catch { /* Modern pages may publish these in separate bootstrap modules. */ }
   for (const script of document.scripts) {
-    if (dtsg && lsd) break;
+    if (dtsg && lsd && revision) break;
     const text = script.textContent ?? '';
     dtsg ||= text.match(/"DTSGInitialData"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"([^"\\]+)"/)?.[1] ?? '';
     lsd ||= text.match(/"LSD"\s*,\s*\[\s*\]\s*,\s*\{\s*"token"\s*:\s*"([^"\\]+)"/)?.[1] ?? '';
+    revision ||= text.match(/"client_revision"\s*:\s*(\d+)/)?.[1] ?? '';
   }
-  return { dtsg, lsd };
+  return { dtsg, lsd, revision };
 }
 
 async function webProfile(accountId: string): Promise<Raw> {
@@ -167,16 +174,20 @@ async function operate(operation: BridgeOperation): Promise<Account | ListPage |
   if (!idPattern.test(operation.targetId) || !['follow', 'unfollow', 'removeFollower'].includes(operation.action) || operation.targetId === operation.accountId) {
     throw new TrackerError('INPUT', 'La acción o la cuenta de destino no es válida.');
   }
-  const verb = { follow: 'create', unfollow: 'destroy', removeFollower: 'remove_follower' }[operation.action];
-  const data = await request(`/api/v1/friendships/${verb}/${operation.targetId}/`, 'POST', new URLSearchParams({ user_id: operation.targetId, container_module: 'profile' }));
-  guard(operation.accountId);
-  if (operation.action === 'removeFollower') {
-    if (data.status !== 'ok') throw new TrackerError('UNKNOWN_ACTION', 'Instagram no ha confirmado la eliminación del seguidor.');
-    return { follower: false };
+  if (operation.action === 'follow' || operation.action === 'unfollow') {
+    if (!cookie('csrftoken')) throw new TrackerError('LOGIN', 'Recarga Instagram e inicia sesión antes de confirmar la acción. No se ha enviado la acción.');
+    const query = instagramFriendshipRequest(operation.action, operation.accountId, operation.targetId, webTokens());
+    const data = await request(query.path, 'POST', query.body, { headers: query.headers });
+    guard(operation.accountId);
+    try { return instagramFriendshipResult(operation.action, data); }
+    catch (error) {
+      if (error instanceof TrackerError) error.endpoint = query.path;
+      throw error;
+    }
   }
-  const relation = data.friendship_status;
-  if (!relation || typeof relation.following !== 'boolean') throw new TrackerError('UNKNOWN_ACTION', 'Instagram no ha confirmado la relación. Compruébala antes de repetir la acción.');
-  return { following: relation.following, requested: !!relation.outgoing_request };
+  const data = await request(`/api/v1/friendships/remove_follower/${operation.targetId}/`, 'POST', new URLSearchParams({ user_id: operation.targetId, container_module: 'profile' }));
+  guard(operation.accountId);
+  return instagramActionResult(operation.action, data);
 }
 
 const marker = '__igTrackerBridgeV2';

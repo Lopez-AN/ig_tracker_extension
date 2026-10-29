@@ -1,6 +1,6 @@
 {
   "name": "ig-tracker",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "description": "Analítica local de seguidores de Instagram, sin cuotas comerciales.",

@@ -2,7 +2,6 @@
   "manifest_version": 3,
   "name": "IG Tracker — Seguidores y estadísticas",
   "short_name": "IG Tracker",
-  "version": "1.0.1",
   "description": "Analiza tus seguidores, detecta cambios y gestiona tu comunidad. En español, con historial local y exportaciones completas.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "unlimitedStorage", "alarms", "scripting"],

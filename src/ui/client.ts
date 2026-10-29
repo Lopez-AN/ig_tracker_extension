@@ -1,7 +1,9 @@
 import type { Command, Reply } from '../core/types';
 import { fromInfo, TrackerError } from '../core/errors';
+import { version as packageVersion } from '../../package.json';
 
 export const isExtension = typeof chrome !== 'undefined' && !!chrome.runtime?.id;
+export const extensionVersion = isExtension ? chrome.runtime.getManifest().version : packageVersion;
 
 export async function send<T = void>(command: Command): Promise<T> {
   if (!isExtension) throw new TrackerError('PREVIEW', 'Esta es una vista previa. Instala la extensión para conectar con Instagram.');

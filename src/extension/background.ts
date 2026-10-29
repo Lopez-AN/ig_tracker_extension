@@ -166,24 +166,34 @@ async function batchStep(job: BatchJob) {
       ...(typeof result.follower === 'boolean' ? { followerAt: confirmedAt } : {}),
       id: `${job.accountId}:${user.id}`, accountId: job.accountId, userId: user.id, user, updatedAt: confirmedAt }));
     const preferences = await settings();
-    await db.update<BatchJob>('jobs', 'batch', current => current?.runId === job.runId ? {
-      ...current, items: current.items.map((item, i) => i === index ? { ...item, status: 'succeeded', message: result.requested ? 'Solicitud enviada' : 'Confirmado por Instagram' } : item),
-      dueAt: Date.now() + preferences.actionIntervalMs, updatedAt: Date.now(), error: '',
-    } : current);
+    await db.update<BatchJob>('jobs', 'batch', current => {
+      if (current?.runId !== job.runId) return current;
+      const items = current.items.map((item, i) => i === index ? { ...item, status: 'succeeded' as const, message: result.requested ? 'Solicitud enviada' : 'Confirmado por Instagram' } : item);
+      return { ...current, items,
+        status: current.status === 'running' && !items.some(item => item.status === 'pending') ? 'completed' : current.status,
+        dueAt: Date.now() + preferences.actionIntervalMs, updatedAt: Date.now(), error: '', failure: undefined };
+    });
   } catch (error) {
     const info = errorInfo(error);
-    await db.update<BatchJob>('jobs', 'batch', current => current?.runId === job.runId ? {
-      ...current, status: 'paused', error: info.message, updatedAt: Date.now(),
-      items: current.items.map((item, i) => i === index ? { ...item, status: info.code === 'UNKNOWN_ACTION' || info.code === 'ACCOUNT_CHANGED' ? 'unknown' : 'failed', message: info.message } : item),
-    } : current);
+    await db.update<BatchJob>('jobs', 'batch', current => {
+      if (current?.runId !== job.runId) return current;
+      const items = current.items.map((item, i) => i === index ? { ...item, status: info.code === 'UNKNOWN_ACTION' || info.code === 'ACCOUNT_CHANGED' ? 'unknown' as const : 'failed' as const, message: info.message } : item);
+      return { ...current, items,
+        status: current.status === 'cancelled' ? 'cancelled' : items.some(item => item.status === 'pending') ? 'paused' : 'completed',
+        error: info.message, failure: info, updatedAt: Date.now() };
+    });
   }
   await notify();
 }
 
 async function recoverUncertainBatch() {
   await db.update<BatchJob>('jobs', 'batch', current => {
-    if (!current?.items.some(item => item.status === 'sending')) return current;
-    return { ...current, status: 'paused', error: 'Se interrumpió una acción. Comprueba su resultado en Instagram; no se repetirá automáticamente.',
+    if (!current) return current;
+    const pending = current.items.some(item => item.status === 'pending');
+    if (!current.items.some(item => item.status === 'sending')) {
+      return current.status === 'paused' && !pending ? { ...current, status: 'completed', updatedAt: Date.now() } : current;
+    }
+    return { ...current, status: current.status === 'cancelled' ? 'cancelled' : pending ? 'paused' : 'completed', error: 'Se interrumpió una acción. Comprueba su resultado en Instagram; no se repetirá automáticamente.',
       items: current.items.map(item => item.status === 'sending' ? { ...item, status: 'unknown', message: 'Resultado no confirmado tras una interrupción' } : item), updatedAt: Date.now() };
   });
 }
@@ -272,9 +282,18 @@ async function handle(command: Command): Promise<unknown> {
       if (!job || !['running', 'paused'].includes(job.status)) return;
       if (!['pause', 'resume', 'cancel'].includes(command.action)) throw new TrackerError('INPUT', 'Control no válido.');
       let tabId = job.tabId;
-      if (command.action === 'resume') { await ensureIdle(); tabId = (await findAccount(job.accountId)).tabId; }
+      if (command.action === 'resume') {
+        await ensureIdle();
+        // Older versions left single failed/uncertain actions paused indefinitely.
+        // Finishing such a job must not contact Instagram or resend that action.
+        if (!job.items.some(item => item.status === 'pending' || item.status === 'sending')) {
+          await db.update<BatchJob>('jobs', 'batch', current => current?.runId === job.runId ? { ...current, status: 'completed', updatedAt: Date.now() } : current);
+          await notify(); await schedule(); return;
+        }
+        tabId = (await findAccount(job.accountId)).tabId;
+      }
       await db.update<BatchJob>('jobs', 'batch', current => current?.runId === job.runId ? { ...current, tabId,
-        status: command.action === 'resume' ? 'running' : command.action === 'pause' ? 'paused' : 'cancelled', dueAt: Date.now(), error: '', updatedAt: Date.now() } : current);
+        status: command.action === 'resume' ? 'running' : command.action === 'pause' ? 'paused' : 'cancelled', dueAt: Date.now(), error: command.action === 'pause' ? current.error : '', failure: command.action === 'pause' ? current.failure : undefined, updatedAt: Date.now() } : current);
       await notify(); await schedule(); return;
     }
     case 'SETTINGS': {

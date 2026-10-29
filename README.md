@@ -10,13 +10,19 @@ Extensión independiente para **Chrome y Edge**, en español, con analítica loc
 4. Abre Instagram, inicia sesión y pulsa el icono de IG Tracker.
 5. **Conectar Instagram** → **Nuevo escaneo** → **Escaneo completo**.
 
-También se genera **`release/ig-tracker-1.0.1.zip`**. Extráelo antes de cargarlo. Instrucciones detalladas: [docs/INSTALACION.txt](docs/INSTALACION.txt).
+También se genera **`release/ig-tracker-1.0.4.zip`**. Extráelo antes de cargarlo. Instrucciones detalladas: [docs/INSTALACION.txt](docs/INSTALACION.txt).
 
-### Actualizar desde 1.0.0
+### Actualizar desde una versión anterior
 
 Pulsa **Recargar** en la tarjeta de IG Tracker de la página de extensiones y recarga también las pestañas de Instagram y del panel. Si instalaste desde un ZIP en otra carpeta, sustituye sus archivos por los del ZIP nuevo antes de recargar. No desinstales la extensión: así conservas su almacenamiento.
 
 La versión 1.0.1 elimina la identificación mediante `accounts/current_user`, prioriza la identidad ya cargada en la sesión web y muestra un diagnóstico persistente si Instagram rechaza la comprobación. Un 429 al conectar no se confunde con un escaneo iniciado ni con avance guardado.
+
+La versión 1.0.2 corrige los botones bloqueados tras una acción individual fallida, recupera los lotes antiguos sin pendientes al reiniciar la extensión y solo confirma un unfollow si Instagram indica que ya no sigues a la cuenta ni tienes una solicitud pendiente. El progreso y los controles del lote permanecen visibles al desplazarte; los errores aparecen también en la fila. El icono «Eliminar de tus seguidores» solo aparece para cuentas que te siguen: no es otro botón de unfollow.
+
+La versión 1.0.3 sustituye el unfollow REST antiguo, que puede devolver HTML con HTTP 200, por la mutación web `usePolarisUnfollowMutation`. Los tokens permanecen en la pestaña de Instagram; si faltan se pide recargar sin enviar la acción. También se reconoce JSON con el prefijo protector de Meta. No se reenvían las acciones anteriores de resultado incierto ni se prueba una segunda ruta después de enviar una mutación.
+
+La versión 1.0.4 aplica la mutación web también a «Seguir». Distingue el seguimiento confirmado de una solicitud pendiente a una cuenta privada. Bajo el nombre de la aplicación aparece la versión instalada, en lugar de «Tu comunidad, más clara».
 
 ## Funciones
 
@@ -47,6 +53,12 @@ npm run test:e2e
 `npm run dev` permite explorar la interfaz; no conecta Instagram desde una página web. Usa el botón de demostración o `http://127.0.0.1:5173/?demo=1`.
 
 `npm run build` comprueba TypeScript, compila la interfaz y los scripts MV3, genera iconos originales y empaqueta `dist/` y el ZIP. No requiere credenciales. No se publican cambios en servicios externos.
+
+### Fuente de la versión
+
+**`package.json` es la única fuente de versión para compilar.** El build combina `scripts/manifest.template.json` (sin versión duplicada) con el campo `version` del paquete y genera `dist/manifest.json`. Chrome toma su versión de ese manifiesto, no de `package.json` ni de `.version` directamente.
+
+El panel muestra `chrome.runtime.getManifest().version`, tanto bajo el nombre como en el pie, para reflejar la extensión realmente instalada. La vista previa web utiliza la versión de `package.json`. El archivo `.version` no participa en la compilación y no se modifica. Referencia: [Chrome runtime.getManifest](https://developer.chrome.com/docs/extensions/reference/api/runtime#method-getManifest).
 
 ## Arquitectura
 

@@ -1,4 +1,7 @@
 import { expect, test } from '@playwright/test';
+import packageInfo from '../../package.json' with { type: 'json' };
+
+const { version } = packageInfo;
 
 test('panel inicial honesto, sin resultados inventados', async ({ page }) => {
   const errors: string[] = [];
@@ -7,8 +10,19 @@ test('panel inicial honesto, sin resultados inventados', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Tu comunidad, de un vistazo' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Conectar mi Instagram' })).toBeVisible();
   await expect(page.getByText('Vista previa web.')).toBeVisible();
+  await expect(page.locator('.brand-version')).toHaveText(`v${version}`);
+  await expect(page.getByText('Tu comunidad, más clara', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/inicio-escritorio.png', fullPage: true });
   expect(errors).toEqual([]);
+});
+
+test('la marca muestra la versión instalada del manifiesto, no otra copia del paquete', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(globalThis, 'chrome', { configurable: true, value: { runtime: { id: 'version-fixture', getManifest: () => ({ version: '9.8.7.6' }) } } });
+  });
+  await page.goto('/?demo=1');
+  await expect(page.locator('.brand-version')).toHaveText('v9.8.7.6');
+  await expect(page.locator('.app-footer .version')).toHaveText('v9.8.7.6');
 });
 
 test('demo: navegación, búsqueda, filtros, selección y exportaciones completas', async ({ page }) => {

@@ -6,8 +6,7 @@ import { zipSync } from 'fflate';
 import path from 'node:path';
 
 const { version } = JSON.parse(await readFile('package.json', 'utf8'));
-const manifest = JSON.parse(await readFile('public/manifest.json', 'utf8'));
-if (manifest.version !== version) throw new Error('La versión del manifiesto y del paquete deben coincidir.');
+const manifest = { ...JSON.parse(await readFile('scripts/manifest.template.json', 'utf8')), version };
 
 // A small original raster icon; no artwork from the reference extension is reused.
 function crc32(buffer) {
@@ -50,6 +49,7 @@ function icon(size) {
 await mkdir('public/icons', { recursive: true });
 for (const size of [16, 48, 128]) await writeFile(`public/icons/${size}.png`, icon(size));
 await viteBuild();
+await writeFile('dist/manifest.json', `${JSON.stringify(manifest, null, 2)}\n`);
 await Promise.all([
   esbuild({ entryPoints: ['src/extension/background.ts'], outfile: 'dist/background.js', bundle: true, format: 'esm', platform: 'browser', target: 'chrome120', minify: true, legalComments: 'none' }),
   esbuild({ entryPoints: ['src/extension/content.ts'], outfile: 'dist/content.js', bundle: true, format: 'iife', platform: 'browser', target: 'chrome120', minify: true, legalComments: 'none' }),

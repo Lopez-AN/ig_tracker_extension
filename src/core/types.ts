@@ -97,6 +97,7 @@ export interface BatchJob {
   updatedAt: number;
   dueAt: number;
   error: string;
+  failure?: ErrorInfo;
 }
 
 export interface RelationOverride {

@@ -63,10 +63,32 @@ entre Chrome y Edge. Desinstalar la extensión elimina su almacenamiento.
 
 Para actualizar una instalación local, vuelve a compilar y pulsa «Recargar»
 en la tarjeta de IG Tracker de la página de extensiones. Después, recarga las
-pestañas de Instagram y del panel. El pie del panel debe indicar v1.0.1.
+pestañas de Instagram y del panel. Bajo el nombre IG Tracker y en el pie
+del panel debe indicar v1.0.4.
 Si instalaste desde un ZIP en otra carpeta, sustituye primero los archivos de
 esa misma carpeta por los del ZIP nuevo. No hace falta desinstalar ni borrar
 los datos de la extensión.
+
+La versión 1.0.2 desbloquea los lotes antiguos sin cuentas pendientes al
+reiniciar la extensión. Si una acción falla, verás el error en la fila y en
+el aviso de acciones. Si quedan cuentas pendientes, puedes continuar solo
+esas cuentas o pulsar «Cancelar lote» para desbloquear las acciones. Un
+resultado incierto no se repite: revísalo en Instagram antes de confirmarlo
+otra vez. El icono de eliminar seguidores solo aparece si esa cuenta te sigue.
+
+La versión 1.0.3 utiliza la mutación web actual para dejar de seguir, en lugar
+de la ruta REST antigua que podía responder con HTML y HTTP 200. Es necesario
+recargar también la pestaña de Instagram para cargar el adaptador nuevo.
+Si ya tienes una acción incierta, comprueba primero la relación en Instagram:
+actualizar no vuelve a enviar esa acción automáticamente.
+
+La versión 1.0.4 utiliza también la mutación web para «Seguir». En cuentas
+privadas, «Solicitud enviada» significa que la aprobación sigue pendiente:
+no se afirma que ya sigues a esa cuenta.
+
+La versión se mantiene en package.json. Al compilar se genera manifest.json,
+que es el archivo que lee Chrome. El panel muestra esa versión instalada.
+No es necesario mantener ni modificar .version.
 
 Esta herramienta es independiente de Instagram/Meta y de InsTF.
 Úsala en tus propias cuentas y de acuerdo con las condiciones de Instagram.
