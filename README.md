@@ -10,7 +10,7 @@ Extensión independiente para **Chrome y Edge**, en español, con analítica loc
 4. Abre Instagram, inicia sesión y pulsa el icono de IG Tracker.
 5. **Conectar Instagram** → **Nuevo escaneo** → **Escaneo completo**.
 
-También se genera **`release/ig-tracker-1.0.4.zip`**. Extráelo antes de cargarlo. Instrucciones detalladas: [docs/INSTALACION.txt](docs/INSTALACION.txt).
+También se genera **`release/ig-tracker-1.0.5.zip`**. Extráelo antes de cargarlo. Instrucciones detalladas: [docs/INSTALACION.txt](docs/INSTALACION.txt).
 
 ### Actualizar desde una versión anterior
 
@@ -23,6 +23,8 @@ La versión 1.0.2 corrige los botones bloqueados tras una acción individual fal
 La versión 1.0.3 sustituye el unfollow REST antiguo, que puede devolver HTML con HTTP 200, por la mutación web `usePolarisUnfollowMutation`. Los tokens permanecen en la pestaña de Instagram; si faltan se pide recargar sin enviar la acción. También se reconoce JSON con el prefijo protector de Meta. No se reenvían las acciones anteriores de resultado incierto ni se prueba una segunda ruta después de enviar una mutación.
 
 La versión 1.0.4 aplica la mutación web también a «Seguir». Distingue el seguimiento confirmado de una solicitud pendiente a una cuenta privada. Bajo el nombre de la aplicación aparece la versión instalada, en lugar de «Tu comunidad, más clara».
+
+La versión 1.0.5 evita el bloqueo por diferencias pequeñas entre una lista terminada y el contador del perfil (por ejemplo, 808 frente a 809). Finaliza con un aviso y permite consultar/exportar las cuentas recuperadas, sin confirmar ausencias en esa lista ni sustituir su última referencia validada. Tras actualizar, puedes reanudar un escaneo antiguo pausado por este motivo sin descargar de nuevo todas sus páginas.
 
 ## Funciones
 
@@ -78,8 +80,9 @@ El panel puede cerrarse sin perder el avance. Cada página se guarda de forma tr
 - Los cursores son secuenciales: no se hacen peticiones paralelas con cursores inventados. Se evitan búsquedas de perfil por cada usuario y se cargan las fotos bajo demanda.
 - No existe un contrato público estable para estas listas. El adaptador usa interfaces web de la sesión del usuario; Instagram puede rechazarlas, cambiarlas, pedir verificaciones o restringir la cuenta. Respeta sus condiciones. No hay promesa de un tiempo fijo ni de riesgo cero.
 - Ante 429 durante un escaneo se aplica espera exponencial y hasta cuatro reintentos de lectura, mostrando el próximo reintento. Sin `Retry-After`, la espera inicial es de al menos un minuto. Antes de conectar o iniciar el trabajo, un 429 produce un diagnóstico persistente y exige confirmación manual después de la espera; no se repite la petición por cada pestaña abierta. La espera no garantiza que Instagram haya retirado la restricción.
-- Ante verificación, cursor repetido, duplicación sospechosa, recuentos no disponibles o discrepancias de recuentos se pausa sin sustituir la referencia válida.
-- Las listas no son una transacción atómica de Instagram. Si cambian mientras se escanea, la validación de recuentos puede exigir otro intento. Recuentos iguales no prueban que no haya habido intercambios simultáneos de seguidores.
+- Ante verificación, cursor repetido, duplicación sospechosa, recuentos no disponibles o discrepancias grandes se pausa sin sustituir la referencia válida. Solo con todas las páginas terminadas se admite una diferencia de hasta el 1% del contador (mínimo 1, máximo 5 cuentas; nunca si una lista o contador es cero). Es un margen de usabilidad, no una prueba de integridad.
+- Una diferencia admitida se conserva en la captura y el historial. No se confirman pérdidas ni «No te siguen de vuelta» si difieren los seguidores, ni «No sigues de vuelta» si difieren los seguidos. Las listas positivas siguen disponibles. Las comparaciones usan la última referencia de cada lista con recuento coincidente, para no inventar altas cuando una cuenta omitida reaparece.
+- Las listas no son una transacción atómica de Instagram. Un contador y la lista pueden diferir; no se puede deducir la causa solo con esos números. Recuentos iguales tampoco prueban que no haya habido intercambios simultáneos de seguidores.
 - Las acciones requieren confirmación expresa, son secuenciales y no se reintentan automáticamente. Si Instagram no confirma una relación, revisa el resultado en su web. No se ejecutaron acciones contra cuentas reales durante el desarrollo.
 - Los datos no se sincronizan entre navegadores/dispositivos. Cada perfil tiene su IndexedDB. El almacenamiento no está cifrado por una contraseña propia; depende de la seguridad del perfil del navegador.
 - Solo se accede a tus cuentas con sesión disponible. No se incluye el análisis de perfiles ajenos ni escaneos programados de analítica; las alarmas son únicamente para recuperar trabajos iniciados manualmente.

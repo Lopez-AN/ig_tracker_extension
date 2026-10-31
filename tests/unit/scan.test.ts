@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { appendPage, emptyProgress, makeSnapshot, summarize } from '../../src/core/scan';
+import { appendPage, comparisonReference, emptyProgress, isListValidated, makeSnapshot, summarize } from '../../src/core/scan';
 import { retryDelay } from '../../src/core/errors';
-import type { ScanJob, User } from '../../src/core/types';
+import type { ScanJob, SnapshotMeta, User } from '../../src/core/types';
 
 const u = (id: string): User => ({ id, username: `cuenta${id}`, fullName: '', avatar: '', isPrivate: false, isVerified: false });
 function job(): ScanJob {
@@ -35,7 +35,7 @@ describe('paginación y finalización', () => {
   it('permite cuentas vacías y una página final vacía', () => {
     expect(appendPage(emptyProgress(), { users: [], nextCursor: '', hasMore: false }).done).toBe(true);
   });
-  it('publica una captura solo si ambas listas finalizaron y coinciden', () => {
+  it('publica una captura validada si ambas listas finalizaron y coinciden', () => {
     const s = makeSnapshot(job(), { followers: 2, following: 1 }, 500);
     expect(s.followers).toHaveLength(2); expect(s.completedAt).toBe(500); expect(s.id).toBe('test');
   });
@@ -43,9 +43,53 @@ describe('paginación y finalización', () => {
     const j = job(); j.followers.done = false;
     expect(() => makeSnapshot(j, { followers: 2, following: 1 })).toThrow('Faltan páginas');
   });
-  it('no publica recuentos diferentes (ni por exceso ni por defecto)', () => {
-    expect(() => makeSnapshot(job(), { followers: 3, following: 1 })).toThrow('contiene 2');
-    expect(() => makeSnapshot(job(), { followers: 1, following: 1 })).toThrow('contiene 2');
+  it('guarda diferencias pequeñas como observaciones no validadas, no como coincidencias', () => {
+    for (const expected of [1, 3]) {
+      const s = makeSnapshot(job(), { followers: expected, following: 1 });
+      expect(s.countDiscrepancies).toEqual({ followers: { actual: 2, expected } });
+      expect(isListValidated(s, 'followers')).toBe(false);
+      expect(isListValidated(s, 'following')).toBe(true);
+    }
+  });
+  it('reproduce 808 seguidores frente a los 809 del perfil sin bloquear ni inventar usuarios', () => {
+    const j = job(); j.followers.users = Array.from({ length: 808 }, (_, i) => u(String(i)));
+    const s = makeSnapshot(j, { followers: 809, following: 1 });
+    expect(s.followers).toHaveLength(808);
+    expect(s.countDiscrepancies?.followers).toEqual({ actual: 808, expected: 809 });
+  });
+  it('limita el margen al 1%, con mínimo 1 y máximo 5 cuentas', () => {
+    const j = job(); j.followers.users = Array.from({ length: 98 }, (_, i) => u(String(i)));
+    expect(() => makeSnapshot(j, { followers: 100, following: 1 })).toThrow('demasiado grande');
+    j.followers.users = Array.from({ length: 995 }, (_, i) => u(String(i)));
+    expect(makeSnapshot(j, { followers: 1000, following: 1 }).countDiscrepancies?.followers?.actual).toBe(995);
+    j.followers.users.pop();
+    expect(() => makeSnapshot(j, { followers: 1000, following: 1 })).toThrow('demasiado grande');
+  });
+  it('no admite diferencias con listas o recuentos vacíos', () => {
+    expect(() => makeSnapshot(job(), { followers: 0, following: 1 })).toThrow('contiene 2');
+    const j = job(); j.followers.users = [];
+    expect(() => makeSnapshot(j, { followers: 1, following: 1 })).toThrow('contiene 0');
+  });
+  it('valida cada lista por separado y conserva las capturas antiguas como validadas', () => {
+    const s = makeSnapshot(job(), { followers: 2, following: 2 });
+    expect(s.countDiscrepancies).toEqual({ following: { actual: 1, expected: 2 } });
+    expect(isListValidated(s, 'followers')).toBe(true);
+    expect(isListValidated(s, 'following')).toBe(false);
+    expect(isListValidated(makeSnapshot(job(), { followers: 2, following: 1 }), 'following')).toBe(true);
+    expect(isListValidated({ mode: 'followers' }, 'following')).toBe(false);
+    expect(isListValidated(null, 'followers')).toBe(false);
+  });
+  it('una diferencia pequeña no permite saltarse páginas pendientes', () => {
+    const j = job(); j.followers.done = false;
+    expect(() => makeSnapshot(j, { followers: 3, following: 1 })).toThrow('Faltan páginas');
+  });
+  it('elige la última referencia con el recuento de esa lista validado', () => {
+    const s = makeSnapshot(job(), { followers: 2, following: 1 });
+    const meta: SnapshotMeta = { ...s, followers: 2, following: 1 };
+    const history = [{ ...meta, id: 'actual' }, { ...meta, id: 'observacion', countDiscrepancies: { followers: { actual: 2, expected: 3 } } }, { ...meta, id: 'referencia' }];
+    expect(comparisonReference(history, 'followers')?.id).toBe('referencia');
+    expect(comparisonReference(history, 'following')?.id).toBe('observacion');
+    expect(comparisonReference(history.slice(0, 2), 'followers')).toBeUndefined();
   });
   it('un escaneo rápido no suplanta la lista de seguidos', () => {
     const j = job(); j.mode = 'followers'; j.following = emptyProgress();
@@ -53,7 +97,9 @@ describe('paginación y finalización', () => {
     expect(s.following).toBeNull();
   });
   it('no inventa ceros ni valida capturas sin un recuento disponible', () => {
-    expect(() => makeSnapshot(job(), { followers: null, following: null })).toThrow('No se puede validar');
+    for (const followers of [null, NaN, Infinity, -1, 2.5]) {
+      expect(() => makeSnapshot(job(), { followers, following: 1 })).toThrow('No se puede validar');
+    }
   });
   it('el resumen no transmite todos los perfiles en cada actualización', () => {
     expect(summarize(job())?.followers).toBe(2); expect(summarize(null)).toBeNull();

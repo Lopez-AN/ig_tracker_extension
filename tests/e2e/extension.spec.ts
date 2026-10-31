@@ -32,6 +32,8 @@ interface Model {
   sessionRetryAfter?: string;
   sessionCalls: string[];
   missingCounts?: boolean;
+  profileFollowerCount?: number;
+  profileFollowingCount?: number;
   rejectLargePages?: boolean;
   requestedCounts: number[];
   gate?: Promise<void>;
@@ -48,7 +50,7 @@ const test = base.extend<{ extensionContext: BrowserContext; panel: Page; instag
     await context.route('https://www.instagram.com/**', async route => {
       const url = new URL(route.request().url());
       const respond = (data: unknown, status = 200, headers?: Record<string, string>) => route.fulfill({ contentType: 'application/json', status, body: JSON.stringify(data), headers });
-      const sessionUser = { ...rawUser(Number(model.accountId)), username: 'cuenta_prueba', ...(model.missingCounts ? {} : { follower_count: model.followers.length, following_count: model.following.length }) };
+      const sessionUser = { ...rawUser(Number(model.accountId)), username: 'cuenta_prueba', ...(model.missingCounts ? {} : { follower_count: model.profileFollowerCount ?? model.followers.length, following_count: model.profileFollowingCount ?? model.following.length }) };
       if (url.pathname === '/') {
         const profile = model.sessionEmbedded ? `<script type="application/json">${JSON.stringify({ data: { viewedProfile: { ...sessionUser, pk: '99', username: 'perfil_ajeno' }, currentUser: sessionUser } })}</script>` : '';
         const bootstrap = model.webBootstrap ? '<script type="application/json" id="__eqmc">{"f":"simulated-dtsg-fixture","l":"simulated-lsd-fixture","client_revision":123456}</script>' : '';
@@ -247,6 +249,93 @@ test('cursor repetido pausa sin historial ni falsos unfollows', async ({ panel, 
   await expect.poll(async () => (await state(panel)).scan?.status).toBe('paused');
   const data = await state(panel);
   expect(data.scan?.errorCode).toBe('CURSOR'); expect(data.history).toHaveLength(0);
+});
+
+test('808 frente a 809 finaliza con aviso, conserva la referencia y no inventa pérdidas ni altas al recuperarse', async ({ panel, model }) => {
+  model.followers = Array.from({ length: 809 }, (_, i) => 1000 + i);
+  await connect(panel); await scan(panel);
+  const reference = (await state(panel)).latest!.id;
+  model.profileFollowerCount = 809;
+  model.followers = model.followers.filter(id => id !== 1050);
+  await scan(panel);
+  let data = await state(panel);
+  expect(data.latest?.followers).toHaveLength(808);
+  expect(data.latest?.countDiscrepancies?.followers).toEqual({ actual: 808, expected: 809 });
+  expect(data.previous?.id).toBe(reference);
+  const notice = panel.getByRole('region', { name: 'Diferencia de recuentos' });
+  await expect(notice).toContainText('808 seguidores; Instagram indica 809');
+  await expect(panel.getByRole('region', { name: 'Progreso del escaneo' })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Nuevo escaneo' })).toBeEnabled();
+  await expect(panel.locator('.stat-card').filter({ hasText: 'Seguidores perdidos' }).locator('.stat-value')).toHaveText('—');
+  await expect(panel.locator('.activity-items button').filter({ hasText: 'Seguidores perdidos' }).locator('b')).toHaveText('—');
+  await panel.screenshot({ path: 'test-results/escaneo-diferencia-recuentos.png', fullPage: true });
+  for (const category of ['Seguidores perdidos', 'No te siguen de vuelta']) {
+    await panel.getByRole('navigation').getByRole('button', { name: category }).click();
+    await expect(panel.getByRole('heading', { name: 'Esta lista está sin confirmar' })).toBeVisible();
+    await expect(panel.locator('tbody tr')).toHaveCount(0);
+    await expect(panel.getByText('Todo al día por aquí', { exact: true })).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: 'Exportar', exact: true })).toBeDisabled();
+  }
+  await panel.reload();
+  await expect(notice).toBeVisible();
+  await panel.locator('.community-legend button').first().click();
+  await panel.getByRole('button', { name: 'Exportar', exact: true }).click();
+  const downloaded = panel.waitForEvent('download');
+  await panel.getByRole('button', { name: 'Descargar JSON' }).click();
+  const stream = await (await downloaded).createReadStream();
+  let text = ''; for await (const chunk of stream!) text += chunk.toString();
+  expect(JSON.parse(text).cuentas).toHaveLength(808);
+  await panel.getByRole('navigation').getByRole('button', { name: 'Historial' }).click();
+  await expect(panel.locator('tbody tr').first()).toContainText('Diferencia de recuentos');
+  // A second observation must not replace the last exact reference.
+  await scan(panel);
+  expect((await state(panel)).previous?.id).toBe(reference);
+  model.followers.push(1050);
+  await scan(panel);
+  data = await state(panel);
+  expect(data.previous?.id).toBe(reference);
+  expect(data.latest?.countDiscrepancies).toBeUndefined();
+  await panel.getByRole('navigation').getByRole('button', { name: 'Nuevos seguidores' }).click();
+  await expect(panel.locator('tbody tr')).toHaveCount(0);
+  await expect(notice).toHaveCount(0);
+});
+
+test('una diferencia de seguidos conserva relaciones positivas, pero no afirma ausencias', async ({ panel, model }) => {
+  await connect(panel); await scan(panel);
+  model.profileFollowingCount = 80;
+  model.following = model.following.filter(id => id !== 1050);
+  await scan(panel);
+  await panel.getByRole('navigation').getByRole('button', { name: 'No sigues de vuelta' }).click();
+  await expect(panel.getByRole('heading', { name: 'Esta lista está sin confirmar' })).toBeVisible();
+  await panel.getByRole('navigation').getByRole('button', { name: 'Resumen' }).click();
+  await panel.locator('.community-legend button').first().click();
+  await panel.getByRole('textbox', { name: 'Buscar usuario o nombre' }).fill('persona1050');
+  await expect(panel.locator('tbody tr .relation-tag')).toHaveText('Sin comprobar');
+  await panel.getByRole('navigation').getByRole('button', { name: 'Seguidores mutuos' }).click();
+  await expect(panel.locator('tbody tr')).toHaveCount(25);
+  expect((await state(panel)).latest?.countDiscrepancies?.following).toEqual({ actual: 79, expected: 80 });
+});
+
+test('reanudar un escaneo antiguo pausado por 808/809 finaliza sin descargar otra vez', async ({ panel, model }) => {
+  model.followers = Array.from({ length: 808 }, (_, i) => 1000 + i);
+  await connect(panel); await scan(panel, 'followers');
+  model.profileFollowerCount = 809;
+  await panel.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>(resolve => { const request = indexedDB.open('ig-tracker-v1'); request.onsuccess = () => resolve(request.result); });
+    await new Promise<void>((resolve, reject) => {
+      const tx = database.transaction('jobs', 'readwrite');
+      const source = tx.objectStore('jobs'); const request = source.get('scan');
+      request.onsuccess = () => source.put({ ...request.result, runId: 'legacy-count-mismatch', status: 'paused', errorCode: 'COUNT_MISMATCH', error: 'La lista contiene 808, pero Instagram indica 809.' });
+      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
+    }); database.close();
+    await chrome.storage.local.set({ revision: Date.now() });
+  });
+  const calls = model.pageCalls.length;
+  await panel.getByRole('button', { name: 'Reanudar', exact: true }).click();
+  await expect.poll(async () => (await state(panel)).scan?.status).toBe('completed');
+  expect(model.pageCalls).toHaveLength(calls);
+  expect((await state(panel)).latest?.countDiscrepancies?.followers).toEqual({ actual: 808, expected: 809 });
+  await expect(panel.getByRole('button', { name: 'Nuevo escaneo' })).toBeEnabled();
 });
 
 test('una acción incierta no se reintenta; solo se procesan las pendientes', async ({ panel, model }) => {

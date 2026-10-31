@@ -3,12 +3,12 @@
 ## Comprobado localmente
 
 - TypeScript sin errores y compilación de producción con Vite/esbuild.
-- **95 pruebas unitarias**: comparaciones por ID, cambios de nombre, aislamiento entre cuentas, modificaciones posteriores a capturas, más de 50 resultados, deduplicación, cursores, listas incompletas, recuentos ausentes/discrepantes, espera exponencial y cabeceras malformadas. Incluyen la selección del usuario correcto en datos web de arranque, ausencia de secretos en el perfil normalizado, espera específica para 429 y 12 comprobaciones de confirmación de acciones. Las 25 nuevas pruebas de 1.0.3 cubren la mutación de unfollow y la decodificación segura de respuestas. Las 7 nuevas de 1.0.4 cubren follow, cuentas privadas, rechazo sin efecto, tokens ausentes y errores GraphQL con datos parciales.
+- **105 pruebas unitarias**: comparaciones por ID, cambios de nombre, aislamiento entre cuentas, modificaciones posteriores a capturas, más de 50 resultados, deduplicación, cursores, listas incompletas, recuentos ausentes/discrepantes, espera exponencial y cabeceras malformadas. Incluyen la selección del usuario correcto en datos web de arranque, ausencia de secretos en el perfil normalizado, espera específica para 429 y comprobaciones de confirmación de acciones. En 1.0.5 se reproduce 808/809, se acota el margen admitido y se comprueba que las discrepancias se persisten y no generan falsas ausencias ni altas al recuperar perfiles omitidos.
 - Persistencia IndexedDB: confirmación atómica de capturas, cancelación/pausa durante verificación, actualizaciones concurrentes y eliminación limitada a una cuenta.
 - CSV/XLSX completos con Unicode, escape de XML/comillas y protección frente a fórmulas de hojas de cálculo.
-- **40 pruebas de navegador** con Playwright, incluyendo la extensión MV3 real instalada en **Chromium / Chrome for Testing**. Todas las respuestas de Instagram se interceptan y simulan, sin acceso a cuentas reales.
-- Auditoría npm: **0 vulnerabilidades** en las dependencias de la entrega.
-- Artefactos generados: `dist/` y `release/ig-tracker-1.0.4.zip`, con manifiesto, scripts, interfaz, iconos e instrucciones. El manifiesto se genera desde la plantilla y la versión de `package.json`.
+- **43 pruebas de navegador** con Playwright, incluyendo la extensión MV3 real instalada en **Chromium / Chrome for Testing**. Todas las respuestas de Instagram se interceptan y simulan, sin acceso a cuentas reales.
+- Auditoría npm de la entrega anterior: **0 vulnerabilidades**; no se han cambiado dependencias ni repetido la auditoría en esta corrección.
+- Artefactos generados: `dist/` y `release/ig-tracker-1.0.5.zip`, con manifiesto, scripts, interfaz, iconos e instrucciones. El manifiesto se genera desde la plantilla y la versión de `package.json`.
 
 Comando reproducible: `npm run check`. El ZIP se genera con `npm run build`.
 
@@ -54,6 +54,9 @@ Comando reproducible: `npm run check`. El ZIP se genera con `npm run build`.
 38. No enviar ninguna mutación de follow si faltan los tokens web ni usar create REST como alternativa.
 39. La versión del lateral y del pie coincide con el manifiesto instalado en Chromium y con la versión fuente del paquete.
 40. La vista previa utiliza el paquete; una prueba con manifiesto simulado distinto comprueba que una extensión instalada prioriza su versión real.
+41. Reproducir 808 seguidores recuperados frente a 809 en el perfil: finalizar con aviso persistente, permitir exportar los 808, liberar los controles y no presentar pérdidas o relaciones no confirmadas como cero. Repetir la observación y recuperar la cuenta omitida sin sustituir la referencia válida ni inventar altas.
+42. Una diferencia de seguidos bloquea «No sigues de vuelta» y muestra relaciones ausentes como «Sin comprobar», conservando coincidencias mutuas observadas.
+43. Reanudar un trabajo antiguo pausado en validación por 808/809 sin repetir la descarga.
 
 Desde 1.0.3, el simulador hace fallar expresamente el unfollow REST antiguo con HTML y HTTP 200; desde 1.0.4 también rechaza create REST. Las pruebas de éxito exigen la mutación `/api/graphql` y comprueban documento, nombre, destino, tokens y cabeceras. Así, una simulación complaciente de las rutas antiguas ya no puede ocultar estos fallos. Las capturas del usuario son evidencia de sus fallos reales; el usuario también confirmó el unfollow real de 1.0.3. El agente solo ha ejecutado mutaciones contra el simulador.
 
@@ -68,10 +71,11 @@ Capturas de pantalla generadas al ejecutar estas pruebas:
 - `test-results/unfollow-error.png`
 - `test-results/lote-en-pausa.png`
 - `test-results/seguir-solicitud-privada.png`
+- `test-results/escaneo-diferencia-recuentos.png`
 
 ## Pendiente con tu sesión
 
-**El agente no probó Instagram en vivo**: no se utilizó una sesión real durante el desarrollo ni se realizaron acciones reales desde las herramientas. El usuario sí confirmó el funcionamiento del unfollow de 1.0.3; queda pendiente su comprobación del follow de 1.0.4 con su propia sesión.
+**El agente no probó Instagram en vivo**: no se utilizó una sesión real durante el desarrollo ni se realizaron acciones reales desde las herramientas. El usuario sí confirmó el funcionamiento del unfollow de 1.0.3; queda pendiente comprobar el follow y la recuperación del escaneo 808/809 con su propia sesión. La captura del usuario prueba el bloqueo anterior, pero no permite deducir la causa de la discrepancia del contador.
 
 La instalación y las APIs de extensión se verificaron en Chromium. El manifiesto utiliza APIs compartidas con Chrome y Edge (MV3, mínimo Chromium 120), pero no se certificó una instalación interactiva en ambos navegadores del usuario.
 

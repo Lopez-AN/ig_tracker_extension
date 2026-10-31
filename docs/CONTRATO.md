@@ -40,10 +40,13 @@ No se consulta `accounts/current_user`: esa comprobación adicional podía termi
 1. El ID de Instagram, no el nombre de usuario, identifica a una persona.
 2. La deduplicación admite solapamientos entre páginas; cursores repetidos y páginas enteramente repetidas son errores.
 3. Solo una lista terminada se considera completa. El fin no se infiere por recibir menos usuarios que el tamaño solicitado.
-4. Antes de publicar una captura, se vuelven a consultar los recuentos. Deben estar disponibles y coincidir exactamente con los IDs únicos descargados; si faltan, se pausa sin guardar una captura no validada.
+4. Antes de publicar una captura, se vuelven a consultar los recuentos. Si no están disponibles, se pausa. Con todas las páginas terminadas se permite una diferencia de hasta `max(1, min(5, floor(recuento * 0.01)))` cuentas, salvo si el contador o la lista son cero. Una diferencia mayor sigue siendo `COUNT_MISMATCH` y no genera historial. Este margen permite usar los datos observados, pero no certifica que la lista sea íntegra.
 5. Un trabajo pausado, cancelado o incompleto nunca genera una captura de historial.
 6. El estado, la captura y los metadatos finales se confirman transaccionalmente. El historial no cambia cuando se ejecuta una acción posterior.
 7. Los escaneos de solo seguidores no actualizan las listas históricas de seguidos; la UI muestra su antigüedad.
+8. Las diferencias admitidas se guardan por lista como `Snapshot.countDiscrepancies` y se conservan también en `SnapshotMeta`. Las capturas antiguas sin ese campo siguen siendo referencias validadas, porque antes solo se guardaban con coincidencia exacta. No se inventan perfiles para cuadrar un contador.
+9. Una lista con diferencias nunca prueba ausencias: seguidores discrepantes impiden confirmar pérdidas y «No te siguen de vuelta»; seguidos discrepantes impiden «No sigues de vuelta». Las cuentas observadas, las coincidencias mutuas y las incorporaciones respecto de una referencia validada siguen disponibles. La UI distingue «sin confirmar» de cero resultados y no exporta categorías sin confirmar.
+10. `previous` y `previousFull` seleccionan la última referencia anterior validada de seguidores y de seguidos, respectivamente, omitiendo observaciones discrepantes de esa lista. Así no se generan altas falsas cuando reaparecen perfiles omitidos. No se mutan ni se borran las capturas anteriores. Reanudar un trabajo antiguo pausado en `verify` aplica estas mismas reglas sin volver a descargar sus páginas.
 
 ## Estados
 
@@ -64,7 +67,7 @@ El lote puede conservar `failure: ErrorInfo` con código, estado HTTP y ruta san
 | `RATE_LIMIT` | Durante el escaneo: espera exponencial y `Retry-After`, máximo cuatro reintentos antes de pausar. En conexión/preparación: estado persistente, cuenta atrás y confirmación manual; no se prueba cada pestaña ni se repite durante la espera |
 | `NETWORK` | Lecturas: reintento limitado con avance persistente |
 | `REJECTED` | Si se rechaza `count > 50` con 400, probar 50 una vez; otros casos pausan |
-| `CURSOR`, `INCOMPLETE`, `COUNT_MISMATCH`, `COUNT_UNAVAILABLE` | Cancelar e iniciar nueva captura; no producir falsos cambios con listas truncadas o sin recuentos verificables |
+| `CURSOR`, `INCOMPLETE`, `COUNT_MISMATCH`, `COUNT_UNAVAILABLE` | Cancelar e iniciar nueva captura; no producir falsos cambios con listas truncadas, diferencias grandes o sin recuentos verificables. Las diferencias pequeñas admitidas ya no son errores bloqueantes: finalizan con metadatos y aviso |
 | `UNKNOWN_ACTION` | Revisar Instagram antes de repetir; no hay reintento automático |
 | `TAB` | Abrir/recargar Instagram y reanudar |
 

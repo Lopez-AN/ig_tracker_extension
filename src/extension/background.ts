@@ -1,6 +1,6 @@
 import * as db from '../core/db';
 import { errorInfo, fromInfo, rateLimitDelay, retryDelay, TrackerError } from '../core/errors';
-import { appendPage, emptyProgress, makeSnapshot, summarize } from '../core/scan';
+import { appendPage, comparisonReference, emptyProgress, makeSnapshot, summarize } from '../core/scan';
 import { DEFAULT_SETTINGS, type Account, type ActionResult, type AppState, type BatchJob, type BridgeOperation, type Command, type ConnectionIssue, type ListPage, type RelationOverride, type Reply, type ScanJob, type Settings, type Snapshot, type SnapshotMeta } from '../core/types';
 
 const WAKE = 'ig-tracker-work';
@@ -86,7 +86,7 @@ async function state(): Promise<AppState> {
   const fullHistory = history.filter(item => item.mode === 'full');
   const load = async (meta?: SnapshotMeta) => meta ? await db.get<Snapshot>('snapshots', meta.id) ?? null : null;
   const [accounts, latest, previous, full, previousFull, scan, batch, overrides, preferences] = await Promise.all([
-    db.all<Account>('accounts'), load(history[0]), load(history[1]), load(fullHistory[0]), load(fullHistory[1]),
+    db.all<Account>('accounts'), load(history[0]), load(comparisonReference(history, 'followers')), load(fullHistory[0]), load(comparisonReference(fullHistory, 'following')),
     db.get<ScanJob>('jobs', 'scan'), db.get<BatchJob>('jobs', 'batch'),
     id ? db.all<RelationOverride>('relations', id) : Promise.resolve([]), settings(),
   ]);

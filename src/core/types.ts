@@ -20,6 +20,8 @@ export interface Account extends User {
   connectedAt: number;
 }
 
+export type CountDiscrepancies = Partial<Record<ListKind, { actual: number; expected: number }>>;
+
 export interface Snapshot {
   id: string;
   accountId: string;
@@ -29,6 +31,7 @@ export interface Snapshot {
   followers: User[];
   following: User[] | null;
   requests: number;
+  countDiscrepancies?: CountDiscrepancies;
 }
 
 export interface SnapshotMeta {
@@ -40,6 +43,7 @@ export interface SnapshotMeta {
   followers: number;
   following: number | null;
   requests: number;
+  countDiscrepancies?: CountDiscrepancies;
 }
 
 export interface ListProgress {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateMetrics } from '../../src/core/analytics';
+import { calculateMetrics, metricWarning } from '../../src/core/analytics';
 import type { RelationOverride, Snapshot, User } from '../../src/core/types';
 
 const u = (id: string, username = `cuenta${id}`): User => ({ id, username, fullName: username, avatar: '', isPrivate: false, isVerified: false });
@@ -64,6 +64,38 @@ describe('comparaciones por identificador', () => {
     const old = snapshot(Array.from({ length: 200 }, (_, i) => u(String(i))), [], 10);
     const current = snapshot([]);
     expect(calculateMetrics(current, old, current, old).lost).toHaveLength(200);
+  });
+  it('una discrepancia de seguidores no inventa pérdidas ni cuentas que no te siguen', () => {
+    const old = snapshot([u('1'), u('2')], [u('2')], 10);
+    const current = snapshot([u('1'), u('3')], [u('2')]);
+    current.countDiscrepancies = { followers: { actual: 2, expected: 3 } };
+    const result = calculateMetrics(current, old, current, old);
+    expect(result.lost).toEqual([]);
+    expect(result.notFollowedBack).toEqual([]);
+    expect(result.new.map(user => user.id)).toEqual(['3']);
+    expect(result.followers).toHaveLength(2);
+    expect(metricWarning('lost', current, old, current, old)).toContain('no coincide');
+    expect(metricWarning('notFollowedBack', current, old, current, old)).not.toBeNull();
+    expect(metricWarning('new', current, old, current, old)).toBeNull();
+  });
+  it('una discrepancia de seguidos no afirma que no sigues a alguien', () => {
+    const old = snapshot([u('1'), u('2')], [u('1'), u('2')], 10);
+    const current = snapshot([u('1'), u('2')], [u('1')]);
+    current.countDiscrepancies = { following: { actual: 1, expected: 2 } };
+    const result = calculateMetrics(current, old, current, old);
+    expect(result.notFollowingBack).toEqual([]);
+    expect(result.mutual.map(user => user.id)).toEqual(['1']);
+    expect(metricWarning('notFollowingBack', current, old, current, old)).toContain('seguidos');
+  });
+  it('una cuenta ausente en una referencia no validada no se declara nueva', () => {
+    const old = snapshot([u('1')], [u('1')], 10);
+    old.countDiscrepancies = { followers: { actual: 1, expected: 2 }, following: { actual: 1, expected: 2 } };
+    const current = snapshot([u('1'), u('2')], [u('1'), u('2')]);
+    const result = calculateMetrics(current, old, current, old);
+    expect(result.new).toEqual([]);
+    expect(result.newFollowing).toEqual([]);
+    expect(metricWarning('new', current, old, current, old)).not.toBeNull();
+    expect(metricWarning('newFollowing', current, old, current, old)).not.toBeNull();
   });
   it('una acción posterior no rejuvenece una modificación antigua de otro campo', () => {
     const current = snapshot([u('1')], [], 100);

@@ -24,6 +24,13 @@ describe('persistencia transaccional', () => {
     expect((await db.all<SnapshotMeta>('history', 'accountA'))[0].followers).toBe(0);
     expect(await db.get('snapshots', snapshot.id)).toEqual(snapshot);
   });
+  it('conserva las discrepancias en la captura y sus metadatos al finalizar', async () => {
+    await db.put('jobs', job);
+    const observation = { ...snapshot, countDiscrepancies: { followers: { actual: 808, expected: 809 } } };
+    expect(await db.completeScan(observation, job.runId)).toBe(true);
+    expect((await db.get<Snapshot>('snapshots', snapshot.id))?.countDiscrepancies).toEqual(observation.countDiscrepancies);
+    expect((await db.get<SnapshotMeta>('history', snapshot.id))?.countDiscrepancies).toEqual(observation.countDiscrepancies);
+  });
   it('no completa un trabajo cancelado o sustituido', async () => {
     await db.put('jobs', { ...job, status: 'cancelled' });
     expect(await db.completeScan(snapshot, job.runId)).toBe(false);
